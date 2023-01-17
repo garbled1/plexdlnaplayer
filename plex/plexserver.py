@@ -46,24 +46,28 @@ def run_primary_uvicorn(app, **kwargs):
 
 
 async def on_new_dlna_device(location_url):
-    print(f"got new dlna deviec location url {location_url}")
+    print(f"got new dlna device location url {location_url}")
     for d in devices:
         if d.location_url == location_url:
             return
-    device = DlnaDevice(location_url)
+    # Check if we already had a port allocated from a previous run of the server as we don't want to mix up servers and ports
+    port = settings.load_dlna_location_port(location_url)
+    if port == None:
+        port = settings.allocate_new_port()
+        settings.save_dlna_location_port(location_url, port)    # save for next time
+    device = DlnaDevice(location_url, port)
     try:
         await device.get_data()
     except Exception as ex:
         print(f'Got Exception {ex}')
         return
     print(f"got new dlna device from {device.name}")
-    new_port = settings.allocate_new_port()
-    device.server = await run_uvicorn("plex:plex_server", host="0.0.0.0", port=new_port, loop="none", lifespan="on")
-    asyncio.create_task(device.loop_subscribe(port=new_port), name=f"dlna sub {device.name}")
+    device.server = await run_uvicorn("plex:plex_server", host="0.0.0.0", port=device.port, loop="none", lifespan="on")
+    asyncio.create_task(device.loop_subscribe(port=device.port), name=f"dlna sub {device.name}")
     devices.append(device)
-    adapter = adapter_by_device(device, port=new_port)
+    adapter = adapter_by_device(device, port=device.port)
     adapter.start_plex_tv_notify()
-    gdm = PlexGDM(device, new_port)
+    gdm = PlexGDM(device, device.port)
     gdm.run()
 
 
@@ -375,8 +379,12 @@ async def timeline_poll(request: Request,
     asyncio.create_task(device.loop_subscribe(port=request.url.port))
     adapter = adapter_by_device(device, device.port)
     if wait == 1:
-        await adapter.wait_for_event(settings.plex_notify_interval * 20, interesting_fields=[
-            'state', 'volume', 'current_uri', 'elapsed_jump'])
+        try:
+            await adapter.wait_for_event(settings.plex_notify_interval * 20, interesting_fields=[
+                'state', 'volume', 'current_uri', 'elapsed_jump'])
+        except asyncio.exceptions.TimeoutError:
+            print('timeout - ignoring')
+            await build_response(XML_OK, device=device, status_code=200,  headers=timeline_poll_headers(device))
     msg = await sub_man.msg_for_device(device)
     while msg is None:
         print(f"waiting for msg {target_uuid}")
@@ -445,15 +453,21 @@ async def mirror(target_uuid: str = Header(None, alias="x-plex-target-client-ide
 
 
 def start_plex_server(port=None):
+    startup_ok = True
     if port is None:
         port = settings.http_port
     if settings.host_ip is None:
         try:
             host_name = socket.gethostname()
             settings.host_ip = socket.gethostbyname(host_name)
-            print(f"Guessed host IP as {settings.host_ip}")
+            if settings.host_ip.startswith("127.0.0"):
+                print(f'Guessed host IP is useless - set HOST_IP manually - exiting')
+                startup_ok = False
+            else:
+                print(f"Guessed host IP as {settings.host_ip}")
         except:
             print(f"Could not guess host IP, use HOST_IP in startup.")
             pass
 
-    run_primary_uvicorn("plex:plex_server", host="0.0.0.0", port=port, loop="none")
+    if startup_ok:
+        run_primary_uvicorn("plex:plex_server", host="0.0.0.0", port=port, loop="none")

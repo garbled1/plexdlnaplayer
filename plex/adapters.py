@@ -194,8 +194,8 @@ class DlnaState(object):
             self.current_track_duration = int(
                 parse_timedelta(position_info.TrackDuration).total_seconds() * 1000)
             if not state and not self._changed_state and self.state in ("TRANSITIONING", "PLAYING"):
-                if __debug__:
-                    print(f"dlna {self.dlna.name} no eplased change? retry state")
+                #if __debug__:
+                #    print(f"dlna {self.dlna.name} no eplased change? retry state")
                 try:
                     state.result = await self.dlna.GetTransportInfo(client=client)
                 except Exception:
@@ -382,10 +382,8 @@ class PlexDlnaAdapter(object):
         if len(self.wait_state_change_events) > 3:
             e = self.wait_state_change_events.pop()
             e['event'].set()
-        try:
-            await asyncio.wait_for(event.wait(), timeout)
-        except asyncio.exceptions.TimeoutError:
-            pass
+            self.wait_state_change_events = []
+        await asyncio.wait_for(event.wait(), timeout)
 
     async def play_media(self, container_key, key=None, offset=0, paused=False, query_params: QueryParams = None):
         if query_params is not None:
@@ -415,6 +413,9 @@ class PlexDlnaAdapter(object):
 
     async def refresh_queue(self, playQueueID):
         await self.queue.refresh_queue(playQueueID)
+        await self.clear_queue(self)
+
+    async def clear_queue(self):
         while len(self.wait_state_change_events) > 0:
             e = self.wait_state_change_events.pop()
             e['event'].set()

@@ -85,7 +85,7 @@ class DlnaDeviceService(object):
         try:
             async with client.post(self.control_url, data=payload.encode('utf8'), headers=headers, timeout=5) as response:
                 if not response.ok:
-                    raise Exception(f"service {self.control_url} {action} {response.status_code} {await response.text()}")
+                    raise Exception(f"service {self.control_url} {action} {response.status} {await response.text()}")
                 self.device.repeat_error_count = 0
                 info = xml2dict(await response.text())
                 error = info.Envelope.Body.Fault.detail.UPnPError.get('errorDescription')
@@ -158,7 +158,7 @@ class DlnaDeviceService(object):
 
 class DlnaDevice(object):
 
-    def __init__(self, location_url):
+    def __init__(self, location_url, port):
         self.location_url = location_url
         self.name = None
         self.model = None
@@ -171,7 +171,7 @@ class DlnaDevice(object):
         self.uuid = None
         self.loop = asyncio.get_running_loop()
         self.repeat_error_count = 0
-        self.port = None
+        self.port = port
         self.server = None
 
     async def get_data(self):
